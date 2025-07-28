@@ -10,7 +10,7 @@ from langchain_community.vectorstores.utils import filter_complex_metadata
 import os
 
 persist_directory = "./langchain_my_index"
-org_file_path = "/home/volhovm/org/org-markdown/tmp/test-therapy.org"
+org_file_path = "/Users/katharinakotter/python_code/llm_orgmode/Examples/testnotes.test-phd.org"
 
 
 # Create embeddings and vector store
