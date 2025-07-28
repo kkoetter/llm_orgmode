@@ -22,3 +22,8 @@ rad.json
 TestResults.xml
 Examples
 check_nix_config.sh
+.direnv
+.idea
+.nix-python
+scripts/db
+scripts/langchain_my_index

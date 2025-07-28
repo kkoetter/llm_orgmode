@@ -1,6 +1,6 @@
 from langchain_community.document_loaders import UnstructuredOrgModeLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from langchain_ollama import OllamaLLM
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,8 +21,8 @@ parser.add_argument('--regenerate', action='store_true', help='Force regeneratio
 args = parser.parse_args()
 
 # Define paths
-persist_directory = "./langchain_my_index"
-org_file_path ="/Users/katharinakotter/python_code/llm_orgmode/Examples/testnotes.test-phd.org"
+persist_directory = "./db" # "./langchain_my_index"
+org_file_path ="/Users/katharinakotter/python_code/llm_orgmode/Examples/testnotes/test.org"
 
 # Create embeddings model
 embeddings = OllamaEmbeddings(
