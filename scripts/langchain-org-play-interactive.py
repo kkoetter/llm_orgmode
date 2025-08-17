@@ -22,7 +22,7 @@ args = parser.parse_args()
 
 # Define paths
 persist_directory = "./db" # "./langchain_my_index"
-org_file_path ="/Users/katharinakotter/python_code/llm_orgmode/Examples/testnotes/test.org"
+org_file_path = "/Examples/Real_notes/test.org"
 
 # Create embeddings model
 embeddings = OllamaEmbeddings(
