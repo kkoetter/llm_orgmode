@@ -1,91 +1,37 @@
 
-from langchain_ollama import OllamaEmbeddings
-import re
+#!/usr/bin/env python3
+"""
+create_vector_db.py - Script to create a vector database from Org mode files.
+
+This script loads Org mode files, cleans them using the OrgModeLoader,
+splits them into chunks, and creates a vector database for semantic search.
+"""
+
+import os
+import argparse
+import time
+from pathlib import Path
+from typing import Optional, Dict, Any
+
 from langchain_community.document_loaders import DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.schema.document import Document
-from langchain_community.document_loaders import TextLoader
+
+# Import the OrgModeLoader from our module
+from orgmode_syntax_cleaner import OrgModeLoader
 
 
-class OrgModeLoader(TextLoader):
-    """Custom loader for Org mode files with cleaning functionality."""
-
-    def __init__(self, file_path, encoding=None):
-        super().__init__(file_path, encoding=encoding)
-
-    def load(self):
-        """Load and return documents from Org mode file with Org syntax cleaned."""
-        with open(self.file_path, encoding=self.encoding) as f:
-            text = f.read()
-
-        # Clean Org mode specific syntax
-        cleaned_text = self._clean_org_syntax(text)
-
-        # Extract title from the file name
-        file_name = os.path.basename(self.file_path)
-        title = os.path.splitext(file_name)[0]
-
-        # Print before and after to verify cleaning is working
-        print(f"Cleaning file: {file_name}")
-        print(f"Original length: {len(text)}, Cleaned length: {len(cleaned_text)}")
-
-        metadata = {
-            "source": self.file_path,
-            "title": title
-        }
-
-        return [Document(page_content=cleaned_text, metadata=metadata)]
-
-    def _clean_org_syntax(self, text):
-        """Remove Org mode specific syntax elements."""
-        # Remove property drawers
-        text = re.sub(r':PROPERTIES:\n(.+?)\n:END:', '', text, flags=re.DOTALL)
-
-        # Remove logbook drawers
-        text = re.sub(r':LOGBOOK:\n(.+?)\n:END:', '', text, flags=re.DOTALL)
-
-        # Remove other drawers
-        text = re.sub(r':(CLOCK|RESULTS|NOTES):\n(.+?)\n:END:', '', text, flags=re.DOTALL)
-
-        # Remove org tags at end of headings
-        text = re.sub(r'\s*:[A-Za-z0-9_@:]+:\s*$', '', text, flags=re.MULTILINE)
-
-        # Remove org priorities [#A], [#B], etc.
-        text = re.sub(r'\s*$$#[A-Z]$$\s*', ' ', text)
-
-        # Remove org links, keeping the description or link target
-        text = re.sub(r'$$\[([^$$]+)\]$$([^$$]+)\]\]', r'\2', text)  # [[link][description]] -> description
-        text = re.sub(r'$$\[([^$$]+)\]\]', r'\1', text)  # [[link]] -> link
-
-        # Remove org formatting markers
-        text = re.sub(r'(\*\*|\/\/|==|~~|_)(.+?)\1', r'\2', text)  # Bold, italic, underline, etc.
-
-        # Remove org comments
-        text = re.sub(r'^\s*#\+.*$', '', text, flags=re.MULTILINE)
-
-        # Remove TODO/DONE states
-        text = re.sub(r'^\s*\*+\s+(TODO|DONE|WAITING|CANCELLED|IN-PROGRESS)\s+', r'* ', text, flags=re.MULTILINE)
-
-        # Remove timestamps
-        text = re.sub(
-            r'<\d{4}-\d{2}-\d{2}(?: [A-Za-z]+)?(?: \d{2}:\d{2})?(?: [+-]\d+[dwmy])?(?: \d{2}:\d{2})?>(?:--<\d{4}-\d{2}-\d{2}(?: [A-Za-z]+)?(?: \d{2}:\d{2})?(?: [+-]\d+[dwmy])?(?: \d{2}:\d{2})?>)?',
-            '', text)
-        text = re.sub(
-            r'$$\d{4}-\d{2}-\d{2}(?: [A-Za-z]+)?(?: \d{2}:\d{2})?(?: [+-]\d+[dwmy])?(?: \d{2}:\d{2})?$$(?:--$$\d{4}-\d{2}-\d{2}(?: [A-Za-z]+)?(?: \d{2}:\d{2})?(?: [+-]\d+[dwmy])?(?: \d{2}:\d{2})?$$)?',
-            '', text)
-
-        # Remove checkbox markers
-        text = re.sub(r'^\s*- $$([ X])$$\s*', '- ', text, flags=re.MULTILINE)
-
-        # Clean up multiple blank lines
-        text = re.sub(r'\n{3,}', '\n\n', text)
-
-        return text.strip()
-
-
-def create_vector_db(files_directory, persist_directory, embedding_model_name, chunk_size=1000, chunk_overlap=200):
+def create_vector_db(
+    files_directory: str, 
+    persist_directory: str, 
+    embedding_model_name: str, 
+    chunk_size: int = 1000, 
+    chunk_overlap: int = 200,
+    glob_pattern: str = "**/*.org",
+    verbose: bool = False,
+    config: Optional[Dict[str, Any]] = None
+) -> Chroma:
     """
     Load Org mode files from a directory, split them into chunks, and create a vector database.
 
@@ -95,70 +41,159 @@ def create_vector_db(files_directory, persist_directory, embedding_model_name, c
         embedding_model_name: Name of the embedding model to use
         chunk_size: Size of text chunks
         chunk_overlap: Overlap between chunks
+        glob_pattern: Pattern to match files
+        verbose: Whether to print detailed information
+        config: Additional configuration for the embedding model
 
     Returns:
         The created vector database
     """
+    start_time = time.time()
+    
+    # Ensure directories exist
+    files_path = Path(files_directory)
+    if not files_path.exists():
+        raise FileNotFoundError(f"Directory not found: {files_directory}")
+    
+    persist_path = Path(persist_directory)
+    persist_path.mkdir(parents=True, exist_ok=True)
+    
     # Load documents
     print(f"Loading Org mode documents from {files_directory}")
     loader = DirectoryLoader(
         files_directory,
-        glob="**/*.org",
-        loader_cls=OrgModeLoader
+        glob=glob_pattern,
+        loader_cls=lambda file_path: OrgModeLoader(file_path, verbose=verbose)
     )
-    documents = loader.load()
-    print(f"Loaded {len(documents)} documents")
-
+    
+    try:
+        documents = loader.load()
+        print(f"Loaded {len(documents)} documents")
+    except Exception as e:
+        print(f"Error loading documents: {str(e)}")
+        raise
+    
+    if not documents:
+        print(f"No documents found in {files_directory} matching pattern {glob_pattern}")
+        return None
+    
     # Split documents into chunks
-    print("Splitting documents into chunks")
+    print(f"Splitting documents into chunks (size: {chunk_size}, overlap: {chunk_overlap})")
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         separators=["\n## ", "\n* ", "\n** ", "\n*** ", "\n", " ", ""],
         length_function=len
     )
+    
     chunks = text_splitter.split_documents(documents)
     print(f"Created {len(chunks)} chunks")
 
     # Print a sample chunk to verify content
-    if chunks:
+    if chunks and verbose:
         print("\nSample chunk content:")
         print(f"Source: {chunks[0].metadata.get('source')}")
         print(f"Content: {chunks[0].page_content[:200]}...")
+        print(f"Chunk sizes: min={min(len(c.page_content) for c in chunks)}, "
+              f"max={max(len(c.page_content) for c in chunks)}, "
+              f"avg={sum(len(c.page_content) for c in chunks) / len(chunks):.1f}")
 
     # Create embeddings
     print(f"Creating embeddings using {embedding_model_name}")
-    embeddings = OllamaEmbeddings(model=embedding_model_name)
+    embedding_config = config or {}
+    
+    try:
+        embeddings = OllamaEmbeddings(model=embedding_model_name, **embedding_config)
+    except Exception as e:
+        print(f"Error initializing embedding model: {str(e)}")
+        raise
 
     # Create and persist vector database
     print(f"Creating vector database in {persist_directory}")
-    db = Chroma.from_documents(
-        documents=chunks,
-        embedding=embeddings,
-        persist_directory=persist_directory
-    )
+    try:
+        db = Chroma.from_documents(
+            documents=chunks,
+            embedding=embeddings,
+            persist_directory=persist_directory
+        )
+        db.persist()
+    except Exception as e:
+        print(f"Error creating vector database: {str(e)}")
+        raise
 
-    print("Vector database created successfully")
+    elapsed_time = time.time() - start_time
+    print(f"Vector database created successfully in {elapsed_time:.2f} seconds")
+    print(f"Total documents: {len(documents)}, Total chunks: {len(chunks)}")
+    
+    return db
+
+
+def main():
+    """Parse command line arguments and create the vector database."""
+    parser = argparse.ArgumentParser(
+        description="Create a vector database from Org mode files"
+    )
+    
+    parser.add_argument(
+        "--files-dir", "-f", 
+        required=True,
+        help="Directory containing Org mode files"
+    )
+    
+    parser.add_argument(
+        "--db-dir", "-d", 
+        required=True,
+        help="Directory to save the vector database"
+    )
+    
+    parser.add_argument(
+        "--model", "-m", 
+        default="mxbai-embed-large",
+        help="Embedding model name (default: mxbai-embed-large)"
+    )
+    
+    parser.add_argument(
+        "--chunk-size", "-c", 
+        type=int, 
+        default=800,
+        help="Size of text chunks (default: 800)"
+    )
+    
+    parser.add_argument(
+        "--overlap", "-o", 
+        type=int, 
+        default=100,
+        help="Overlap between chunks (default: 100)"
+    )
+    
+    parser.add_argument(
+        "--glob", "-g", 
+        default="**/*.org",
+        help="Glob pattern for finding files (default: **/*.org)"
+    )
+    
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Print detailed information during processing"
+    )
+    
+    args = parser.parse_args()
+    
+    # Create vector database with parsed arguments
+    db = create_vector_db(
+        files_directory=args.files_dir,
+        persist_directory=args.db_dir,
+        embedding_model_name=args.model,
+        chunk_size=args.chunk_size,
+        chunk_overlap=args.overlap,
+        glob_pattern=args.glob,
+        verbose=args.verbose
+    )
+    
     return db
 
 
 if __name__ == "__main__":
-    print("import os")
-
-    chunk_size = 800
-    chunk_overlap = 100
-    top_k = 6
-
-    # Configuration
-    persist_directory = "./db"
-    org_files_directory = "/Users/katharinakotter/python_code/llm_orgmode/Examples/testnotes/"
-    embedding_model_name = "mxbai-embed-large"
-
-    # Create vector database
-    db = create_vector_db(
-        files_directory=org_files_directory,
-        persist_directory=persist_directory,
-        embedding_model_name=embedding_model_name,
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap
-    )
+    # If running as a script, call the main function
+    main()
